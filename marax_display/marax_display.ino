@@ -42,10 +42,10 @@
 
 
 #include <Button2.h>
-#define BUTTON1_PIN  0
-#define BUTTON2_PIN  35
-Button2 button1 = Button2(BUTTON1_PIN);
-Button2 button2 = Button2(BUTTON2_PIN);
+#define BUTTONA_PIN  0
+#define BUTTONB_PIN  35
+Button2 buttonA = Button2(BUTTONA_PIN);
+Button2 buttonB = Button2(BUTTONB_PIN);
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 
@@ -92,8 +92,8 @@ void setup() {
   //button.setPressedHandler(pressed);
   //button.setReleasedHandler(released);
   
-  button1.setTapHandler(buttonTab);
-  button2.setTapHandler(buttonTab);
+  buttonA.setClickHandler(buttonClick);
+  buttonB.setClickHandler(buttonClick);
   //debug = false; //somehow setTapHandler runs the functions here. resetting debug, change with button (35)
   //displayDetails = false;
   
@@ -101,8 +101,8 @@ void setup() {
 
 void loop() {
 
-  button1.loop();
-  button2.loop();
+  buttonA.loop();
+  buttonB.loop();
 
   // read serial info every time interval
   currentMillis = millis();
@@ -124,13 +124,16 @@ void loop() {
   }
 }
 
-void buttonTab(Button2& btn) {
-  if (btn == button1) {
+void buttonClick(Button2& btn) {
+  if (btn == buttonA) {
     if(millis()>1000) displayDetails = !displayDetails; //toggle details mode, but not at until 1s after startup
     tft.fillScreen(TFT_BLACK);
-  } else if (btn == button2) {
+    delay(WAIT);
+  }
+  if (btn == buttonB) {
     if(millis()>1000) debug = !debug; //toggle debug mode, but not at until 1s after startup
     tft.fillScreen(TFT_BLACK);
+    delay(WAIT);
   }
 }
 
@@ -147,7 +150,7 @@ void readSerial(){
       i = i + 1;
     }
     if (i == LEN) {
-      //break;
+      break;
     }
     // goto sleep if there's nothing to read
     currentMillis = millis();
@@ -304,6 +307,5 @@ void shotTimer(){
   delay(1000);
   intstr = String( ( millis() - currentMillis ) / 1000 );
   tft.drawString(intstr, 20, 26, 7);
-  button2.loop();
  }
 }
