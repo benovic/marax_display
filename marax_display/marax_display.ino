@@ -13,11 +13,6 @@
  * Debug mode: 
  * invent values for if there's no serial data
  * 
- * TODO:
- * deep sleep
- * fix button hack with 1000 millis
- * shot timer
- * 
  * TTGO resolution: 135X240
  * 
 */
@@ -53,50 +48,81 @@ TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 unsigned long previousMillis = 0;
 unsigned long previousMillisSerial = 0;
 unsigned long currentMillis;
-const long serialInterval = 1000; //time to update graph
-const long interval = 3000; //time to update graph
-char maraxstatus[LEN];
+const int serialInterval = 400; //time to update read serial
+const int interval = 3000; //time to update graph
+char maraxstatus[30];
 char ch;
 char maraMode = 'X'; // C -offee or V -apour prio
 int steamTempActual;
 int steamTempTarget;
 int hxTempActual;
 int boostTime;
-int heating = 1;
-String intstr;
+int heating = 0;
 int i = 0;
 int j = 0;
 boolean debug = false;
 boolean displayDetails = false;
-boolean timeShot = false;
 int hxTemps[XRES];
 int ypos;
 int xpos;
 int arrayOffset = 1;
+String intstr;
+
+/////////////////////////////////////////////
+//scale using Loacell an HX711 amp
+#include "HX711.h"
+HX711 scale;
+#define LOADCELL_DOUT_PIN  12
+#define LOADCELL_SCK_PIN  13
+#define LOADCELL_CALIBRATION_FACTOR 122.40
+unsigned long previousMillisScale = 0;
+unsigned long shotTimerMillis;
+#define SCALE_INTERVAL 10000 //time to reset when nothing changes
+float currentWeight; //scale.get_units() returns a float
+float previousWeight = 0;
+
+/*
+
+
+
+void addtosetup() {
+
+  
+}
+
+void addtoloop() {
+  if(scale.get_units() > 1000) scaleView(); 
+}
+
+
+  
+  
+  }
+*/
+/////////////////////////////////////////////
 
 
 void setup() {
-  // put your setup code here, to run once:
+  // display
   tft.init();
   tft.setRotation(0);
   tft.setTextSize(1);
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
 
-  //init serial connection
-
+  // serial connection to MaraX
   Serial2.begin(9600, SERIAL_8N1, 25, 26); //9600 baud, using Pin 25 RX and 26 TX
   delay(100);
 
-  //button.setChangedHandler(changed);
-  //button.setPressedHandler(pressed);
-  //button.setReleasedHandler(released);
-  
+  // buttons
   buttonA.setClickHandler(buttonClick);
   buttonB.setClickHandler(buttonClick);
-  //debug = false; //somehow setTapHandler runs the functions here. resetting debug, change with button (35)
-  //displayDetails = false;
-  
+
+
+  // scale setup
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.set_scale(LOADCELL_CALIBRATION_FACTOR); //This value is obtained by using the SparkFun_HX711_Calibration sketch
+  scale.tare(); //Assuming there is no weight on the scale at start up, reset the scale to 0
 }
 
 void loop() {
@@ -104,6 +130,13 @@ void loop() {
   buttonA.loop();
   buttonB.loop();
 
+  loopScale();
+
+  loopSerial();
+
+}
+
+void loopSerial() {
   // read serial info every time interval
   currentMillis = millis();
   if (currentMillis - previousMillisSerial >= serialInterval) {
@@ -115,12 +148,6 @@ void loop() {
       readSerial();
     }
     displayData();
-  }
-
-  
-  // when we don't get data from the connection for three intervals ... we go sleepy
-  if (currentMillis - previousMillisSerial >= 10 * serialInterval) {
-    dayDream();
   }
 }
 
@@ -137,7 +164,6 @@ void buttonClick(Button2& btn) {
   }
 }
 
-
 void readSerial(){
   // read the serial buffer
   while (Serial2.available()) {
@@ -149,12 +175,10 @@ void readSerial(){
       maraxstatus[i] = ch;
       i = i + 1;
     }
-    if (i == LEN) {
+    if (i >= LEN) {
+      i = 0;
       break;
     }
-    // goto sleep if there's nothing to read
-    currentMillis = millis();
-    if (currentMillis - previousMillisSerial >= 10 * serialInterval) dayDream();
   }
 }
 
@@ -177,7 +201,8 @@ void displayData() {
     ypos = 0;
     //tft.fillScreen(TFT_BLACK);
 
-    tft.drawString(String(maraxstatus), 0, 0, 2);
+    intstr = String(maraxstatus);
+    tft.drawString(intstr, 0, 0, 2);
     ypos = ypos + 26;
 
     tft.drawString("Mode: ", 0, ypos, 4);
@@ -215,14 +240,13 @@ void displayData() {
     ypos = ypos + 26;
     
   }
-  else { // when !displayDetails,we draw a nicer screen
+  if (!displayDetails) { // when !displayDetails,we draw a nicer screen
     if (heating) {
       tft.setTextColor(TFT_RED, TFT_BLACK);
     }
     else {
       tft.setTextColor(TFT_GREEN, TFT_BLACK);
     }
-
     if (hxTempActual < 100) {
       intstr = "0" + String(hxTempActual); //add zero to keep it 3 digits
     } else {
@@ -230,24 +254,20 @@ void displayData() {
     }
     tft.drawString(intstr, 20, 26, 7);
 
-
     // update graph every time interval
     currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
       // save the last time update
       previousMillis = currentMillis;
-
       maraxDrawTempGraph(); //draw thing
     }
-
   }
-
 }
 
 void maraxDrawTempGraph() {
 
   hxTemps[arrayOffset] = hxTempActual;// get value and increase arrayOffset
-  if (arrayOffset == XRES) {
+  if ( arrayOffset >= XRES -1 ) {
     arrayOffset = 0;
   } else {
     arrayOffset++;
@@ -263,15 +283,14 @@ void maraxDrawTempGraph() {
 
   //draw array from 0 to XRES
   int graphYPposition = 240 - YRES; // to be at the bottom
-  // set the fill color to grey
-  tft.fillRect(0, graphYPposition, XRES, YRES, TFT_BLACK)  ;
-  tft.drawRect(0, graphYPposition, XRES, YRES, TFT_WHITE)  ;
+  tft.fillRect(0, graphYPposition, XRES, YRES, TFT_BLACK);
+  tft.drawRect(0, graphYPposition, XRES, YRES, TFT_WHITE);
 
-  for (i = 0; i < XRES; i++) {
+  for (i = 0; i <= XRES; i++) {
     xpos = ( ( arrayOffset + i ) % ( XRES - 1) ); // shift and loop through array starting with with arrayOffset
     if (LOWTEMP < hxTemps[xpos] < HIGHTEMP) {
-      ypos = graphYPposition + YRES - (YRES / (HIGHTEMP - LOWTEMP) * (hxTemps[xpos] - LOWTEMP)) ; //down to graph, down graph height, up temp value in px
-
+      ypos = graphYPposition + YRES - (YRES / (HIGHTEMP - LOWTEMP) * (hxTemps[xpos] - LOWTEMP)) ; 
+      //down to graph, down graph height, up temp value in px
       if (hxTemps[xpos] < 91) {
         for (j = ypos; j < (graphYPposition + YRES); j++) {
           tft.drawPixel(i, j, TFT_BLUE);
@@ -285,7 +304,6 @@ void maraxDrawTempGraph() {
           tft.drawPixel(i, j, TFT_GREEN);
         }
       }
-
     }
   }
 }
@@ -301,11 +319,84 @@ void dayDream() {
 
 }
 
-void shotTimer(){
- currentMillis = millis();
- while(timeShot) {
-  delay(1000);
-  intstr = String( ( millis() - currentMillis ) / 1000 );
-  tft.drawString(intstr, 20, 26, 7);
- }
+
+void loopScale() {
+  currentMillis = millis();
+  currentWeight = scale.get_units();
+  if ( currentWeight < 0 ) currentWeight = 0;
+
+  //  check interval when weight is added, reset timerstopping(break condition)
+  if ( ( currentMillis - previousMillisScale ) > 1000 && currentWeight - previousWeight > 0.5 ){ 
+    previousMillisScale = currentMillis; //reset break timer
+    previousWeight = currentWeight;
+    scaleView();
+    tft.fillScreen(TFT_BLACK);
+    previousWeight = 0;
+    scale.tare();
+  }
+}
+
+void scaleView() {
+
+  previousWeight = -1;
+  scale.tare();
+  previousMillisScale = millis();
+  shotTimerMillis = millis();
+
+  tft.fillScreen(TFT_BLACK);
+  // graph
+  int maxShotTime = 30000; //30s
+  float maxShotWeight = 40;
+  int graphYPposition = 240 - YRES; // to be at the bottom
+  tft.fillRect(0, graphYPposition, XRES, YRES, TFT_BLACK);
+  tft.drawRect(0, graphYPposition, XRES, YRES, TFT_WHITE);
+  int shotXpos = 0;
+  int shotYpos = 0;
+  tft.drawString("40g", 5, (241-YRES), 2);
+  tft.drawString("0", 5, 220, 2);
+  tft.drawString("30s", 110, 220, 2);
+  
+  while(true) {
+    currentMillis = millis();
+    currentWeight = scale.get_units();
+    if ( currentWeight < 0 ) currentWeight = 0;
+
+    //  check interval when weight is added, reset timerstopping(break condition)
+    if ( ( currentMillis - previousMillisScale ) > 500 && currentWeight - previousWeight > 0.5 ){ 
+      previousMillisScale = currentMillis; //reset break timer
+      previousWeight = currentWeight;
+    }
+    //  escape after weight is same for scaleInterval for TODO: add tolerance!!
+    if (currentMillis - previousMillisScale > SCALE_INTERVAL) { 
+      break; // exit loop
+    }
+
+    // draw time and weight
+    xpos = 5;
+    ypos = 0;
+
+    intstr = String( (currentMillis - shotTimerMillis) / 1000 );
+    if ( ( ( currentMillis - shotTimerMillis)  / 1000 ) < 10) {
+      intstr = "0" + intstr; //add zero to keep it 2 digits
+    }
+    tft.drawString(intstr, xpos, ypos, 7);
+    ypos = ypos + 50;
+    
+    intstr = String(currentWeight);
+    if ( currentWeight < 1 ) intstr = "0" + intstr;
+    tft.drawString(intstr, xpos, ypos, 7);
+
+
+    // plot time and weight
+    // draw just ONE pixel - cheap version
+    shotXpos = XRES * float( float( currentMillis - shotTimerMillis ) / maxShotTime );
+    if ( shotXpos > XRES ) break;
+    shotYpos =  240 - ( float( currentWeight / maxShotWeight ) * YRES ); // 240 = display height
+    
+    //shotYpos = 200;
+    tft.drawPixel(shotXpos, shotYpos, TFT_GREEN);
+    
+    //intstr = String(shotXpos) + " : " + String(shotYpos);
+    //tft.drawString(intstr, 10, 180, 2);
+  }
 }
