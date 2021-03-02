@@ -19,6 +19,8 @@
 
 
 // resolution of screen 135X240 ... resolution of our graph: XRES, YRES mapped to temp range LOWTEMP, HIGHTEMP
+#define SCREENYRES 240
+#define SCREENXRES 135
 #define XRES 135
 #define YRES 120
 #define LOWTEMP 70
@@ -80,6 +82,8 @@ unsigned long shotTimerMillis;
 #define SCALE_INTERVAL 10000 //time to reset when nothing changes
 float currentWeight; //scale.get_units() returns a float
 float previousWeight = 0;
+#define DAMPER 10
+float weights[DAMPER];
 
 /*
 
@@ -133,7 +137,12 @@ void loop() {
   loopScale();
 
   loopSerial();
+  
+  loopDisplay();
+}
 
+void loopDisplay() {
+  displayData();
 }
 
 void loopSerial() {
@@ -141,13 +150,18 @@ void loopSerial() {
   currentMillis = millis();
   if (currentMillis - previousMillisSerial >= serialInterval) {
     previousMillisSerial = currentMillis;
-    
     if (debug) {
       strcpy(maraxstatus, "V1.99,199,111,099,0777,0");
     } else {
       readSerial();
     }
-    displayData();
+    // separate data from read serial string
+    maraMode = maraxstatus[0];
+    steamTempActual = atoi( &maraxstatus[6] );
+    steamTempTarget = atoi( &maraxstatus[10] );
+    hxTempActual = atoi( &maraxstatus[14] );
+    boostTime = atoi( &maraxstatus[18] );
+    heating = atoi( &maraxstatus[23] );
   }
 }
 
@@ -180,18 +194,10 @@ void readSerial(){
       break;
     }
   }
+  
 }
 
 void displayData() {
-
-  // separate data from read serial string
-  maraMode = maraxstatus[0];
-  steamTempActual = atoi( &maraxstatus[6] );
-  steamTempTarget = atoi( &maraxstatus[10] );
-  hxTempActual = atoi( &maraxstatus[14] );
-  boostTime = atoi( &maraxstatus[18] );
-  heating = atoi( &maraxstatus[23] );
-
 
   // inform always when in debug mode
   if (debug) tft.drawString("Debug Mode", 0, 210, 2);
@@ -265,14 +271,12 @@ void displayData() {
 }
 
 void maraxDrawTempGraph() {
-
   hxTemps[arrayOffset] = hxTempActual;// get value and increase arrayOffset
   if ( arrayOffset >= XRES -1 ) {
     arrayOffset = 0;
   } else {
     arrayOffset++;
   }
-
   // for testing:
   if (debug) {
     for (i = 0; i < XRES; i++) {
@@ -280,12 +284,10 @@ void maraxDrawTempGraph() {
     }
     arrayOffset = 42; //random, i diced it
   }
-
   //draw array from 0 to XRES
-  int graphYPposition = 240 - YRES; // to be at the bottom
+  int graphYPposition = SCREENYRES - YRES; // to be at the bottom
   tft.fillRect(0, graphYPposition, XRES, YRES, TFT_BLACK);
   tft.drawRect(0, graphYPposition, XRES, YRES, TFT_WHITE);
-
   for (i = 0; i <= XRES; i++) {
     xpos = ( ( arrayOffset + i ) % ( XRES - 1) ); // shift and loop through array starting with with arrayOffset
     if (LOWTEMP < hxTemps[xpos] < HIGHTEMP) {
@@ -308,25 +310,13 @@ void maraxDrawTempGraph() {
   }
 }
 
-void dayDream() {
-  //tft.fillScreen(TFT_YELLOW);
- // if (TFT_BL > 0) { // TFT_BL has been set in the TFT_eSPI library in the User Setup file TTGO_T_Display.h
- //   pinMode(TFT_BL, OUTPUT); // Set backlight pin to output mode
- //   digitalWrite(TFT_BL, TFT_BACKLIGHT_ON);
- // }
-
- //   esp_sleep_enable_ext0_wakeup(GPIO_NUM_0,1); //1 = High, 0 = Low
-
-}
-
-
 void loopScale() {
   currentMillis = millis();
-  currentWeight = scale.get_units();
-  if ( currentWeight < 0 ) currentWeight = 0;
+  currentWeight = get_weight();
+  //if ( currentWeight < 0 ) currentWeight = 0;
 
   //  check interval when weight is added, reset timerstopping(break condition)
-  if ( ( currentMillis - previousMillisScale ) > 1000 && currentWeight - previousWeight > 0.5 ){ 
+  if ( ( currentMillis - previousMillisScale ) > 500 && currentWeight - previousWeight > 0.5 ){ 
     previousMillisScale = currentMillis; //reset break timer
     previousWeight = currentWeight;
     scaleView();
@@ -336,10 +326,18 @@ void loopScale() {
   }
 }
 
+float get_weight(){
+  for(i=1;i<DAMPER;i++) weights[i] = weights[i-1]; //shift array
+  weights[0] = scale.get_units();// get new read in front
+  currentWeight = 0;//reset
+  for(i=0;i<DAMPER;i++) currentWeight += weights[i]; // add and ...
+  currentWeight = currentWeight / float(DAMPER); // calc avg
+  return currentWeight;
+}
+
 void scaleView() {
 
   previousWeight = -1;
-  scale.tare();
   previousMillisScale = millis();
   shotTimerMillis = millis();
 
@@ -347,18 +345,31 @@ void scaleView() {
   // graph
   int maxShotTime = 30000; //30s
   float maxShotWeight = 40;
-  int graphYPposition = 240 - YRES; // to be at the bottom
+  int graphYPposition = SCREENYRES - YRES; // to be at the bottom
   tft.fillRect(0, graphYPposition, XRES, YRES, TFT_BLACK);
   tft.drawRect(0, graphYPposition, XRES, YRES, TFT_WHITE);
+  int32_t x0 = 0;
+  int32_t y0 = SCREENYRES;
+  int32_t x1 = graphYPposition;
+  int32_t y1 = graphYPposition;
+  uint32_t tftColor = TFT_SILVER;
+  tft.drawLine(x0,y0,x1,y1,tftColor);
+  x0 += 10;
+  x1 += 10;
+  tft.drawLine(x0,y0,x1,y1,tftColor);
   int shotXpos = 0;
   int shotYpos = 0;
-  tft.drawString("40g", 5, (241-YRES), 2);
+  tft.drawString(String(maxShotWeight) + "g", 5, (1+SCREENYRES-YRES), 2);
   tft.drawString("0", 5, 220, 2);
-  tft.drawString("30s", 110, 220, 2);
+  tft.drawString(String(maxShotTime / 1000) + "s", 110, 220, 2);
   
   while(true) {
     currentMillis = millis();
-    currentWeight = scale.get_units();
+    
+    currentWeight = get_weight();
+
+
+    
     if ( currentWeight < 0 ) currentWeight = 0;
 
     //  check interval when weight is added, reset timerstopping(break condition)
@@ -382,18 +393,15 @@ void scaleView() {
     tft.drawString(intstr, xpos, ypos, 7);
     ypos = ypos + 50;
     
-    intstr = String(currentWeight);
+    intstr = String(currentWeight, 1);
     if ( currentWeight < 1 ) intstr = "0" + intstr;
     tft.drawString(intstr, xpos, ypos, 7);
-
 
     // plot time and weight
     // draw just ONE pixel - cheap version
     shotXpos = XRES * float( float( currentMillis - shotTimerMillis ) / maxShotTime );
     if ( shotXpos > XRES ) break;
-    shotYpos =  240 - ( float( currentWeight / maxShotWeight ) * YRES ); // 240 = display height
-    
-    //shotYpos = 200;
+    shotYpos =  SCREENYRES - ( float( currentWeight / maxShotWeight ) * YRES ); // SCREENYRES = display height
     tft.drawPixel(shotXpos, shotYpos, TFT_GREEN);
     
     //intstr = String(shotXpos) + " : " + String(shotYpos);
