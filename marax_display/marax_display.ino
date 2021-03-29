@@ -17,6 +17,15 @@
  * 
 */
 
+/*
+
+           // It reads a screen area and returns the RGB 8 bit colour values of each pixel
+           // Set w and h to 1 to read 1 pixel's colour. The data buffer must be at least w * h * 3 bytes
+  void     readRectRGB(int32_t x0, int32_t y0, int32_t w, int32_t h, uint8_t *data);
+
+*/
+
+
 
 // resolution of screen 135X240 ... resolution of our graph: XRES, YRES mapped to temp range LOWTEMP, HIGHTEMP
 #define SCREENYRES 240
@@ -26,7 +35,6 @@
 #define LOWTEMP 70
 #define HIGHTEMP 110
 
-// Pause in milliseconds between screens, change to 0 to time font rendering
 #define WAIT 500
 
 //chracter length of read string
@@ -82,27 +90,7 @@ unsigned long shotTimerMillis;
 #define SCALE_INTERVAL 10000 //time to reset when nothing changes
 float currentWeight; //scale.get_units() returns a float
 float previousWeight = 0;
-#define DAMPER 10
-float weights[DAMPER];
-
-/*
-
-
-
-void addtosetup() {
-
-  
-}
-
-void addtoloop() {
-  if(scale.get_units() > 1000) scaleView(); 
-}
-
-
-  
-  
-  }
-*/
+#define DAMPER 4
 /////////////////////////////////////////////
 
 
@@ -313,24 +301,22 @@ void maraxDrawTempGraph() {
 void loopScale() {
   currentMillis = millis();
   currentWeight = get_weight();
-  //if ( currentWeight < 0 ) currentWeight = 0;
-
-  //  check interval when weight is added, reset timerstopping(break condition)
-  if ( ( currentMillis - previousMillisScale ) > 500 && currentWeight - previousWeight > 0.5 ){ 
+  if(currentWeight > 0.5) { //when theres more than xg weight
     previousMillisScale = currentMillis; //reset break timer
-    previousWeight = currentWeight;
     scaleView();
+    currentWeight = get_weight();
+    if ( 10 < currentWeight && currentWeight < 60 ) { //when its a shot vs a glass vs a nudge
+      delay(60000); // display shot graph for a minute
+    }
     tft.fillScreen(TFT_BLACK);
-    previousWeight = 0;
     scale.tare();
   }
+  
 }
 
 float get_weight(){
-  for(i=1;i<DAMPER;i++) weights[i] = weights[i-1]; //shift array
-  weights[0] = scale.get_units();// get new read in front
   currentWeight = 0;//reset
-  for(i=0;i<DAMPER;i++) currentWeight += weights[i]; // add and ...
+  for(i=0;i<DAMPER;i++) currentWeight += scale.get_units(); // add and ...
   currentWeight = currentWeight / float(DAMPER); // calc avg
   return currentWeight;
 }
@@ -365,11 +351,7 @@ void scaleView() {
   
   while(true) {
     currentMillis = millis();
-    
     currentWeight = get_weight();
-
-
-    
     if ( currentWeight < 0 ) currentWeight = 0;
 
     //  check interval when weight is added, reset timerstopping(break condition)
@@ -377,7 +359,7 @@ void scaleView() {
       previousMillisScale = currentMillis; //reset break timer
       previousWeight = currentWeight;
     }
-    //  escape after weight is same for scaleInterval for TODO: add tolerance!!
+    //  escape after weight is same for scaleInterval for xs
     if (currentMillis - previousMillisScale > SCALE_INTERVAL) { 
       break; // exit loop
     }
